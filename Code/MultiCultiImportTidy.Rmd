@@ -128,6 +128,7 @@ list.files(DataIn)
 
 TargetFile <- "20250128_B2201_MCMIX004_123_0.csv"
 TubeLabels = 123
+Light = 90
 
 # This opens a compressed file without decompressing.
 # TargetData <- read_csv(unz(DataIn, TargetFile),  
@@ -287,7 +288,8 @@ TargetDataWideFilter %>%
   geom_point(aes(x = time, 
              y = OD680), size = 1, alpha = 0.5) + 
   labs( title = "680 nm Optical Density Readings of Chlorella Cultures", 
-        subtitle = "90 umol photons m-2 s-1", x = "Elapsed Time (hours)", 
+        subtitle = paste(Light, " umol photons m-2 s-1"), 
+        x = "Elapsed Time (hours)", 
         y = "Optical Density (OD at 680 nm)", 
        ) + 
   facet_grid(cols = vars(Tube)) + 
@@ -300,9 +302,7 @@ TargetDataWideFilter %>%
          plot.margin = margin(10, 10, 50, 10) )
 ```
 
-
 # Filter OD outliers
-
 Rewrite with Time Series tools?? Filtering messes up unless - values
 removed b/c of divisions
 
@@ -346,7 +346,12 @@ TargetDataWideFilter <- TargetDataWideFilter %>%
     !is.na(IsMovMAD720Outlier),
     IsMovMAD680Outlier == 0,
     IsMovMAD720Outlier == 0
-         )
+         ) |>
+  filter(OD680 <= 0.5, # hack fix to deal with large excursion
+         OD720 <= 0.5,
+         OD680 >= 0,
+         OD720 >= 0)  
+
 
 # %>%
 #     filter(TimeFlag == 0) 
@@ -367,6 +372,12 @@ TargetDataWideFilter %>%
 ```
 
 
+# Remove outlier filtering columns to simplify
+```{r remove outlier filtering variables}
+TargetDataWideFilter <- TargetDataWideFilter |>
+  select(-c("MovMedian680", "MovMedian720", "MovMAD680", "MovMAD720", "IsMovMAD680Outlier", "IsMovMAD720Outlier"))
+```
+
 # Fits of Data
 Create R function for logistic equation.
 ```{r fitting functions, message = FALSE}
@@ -384,11 +395,9 @@ logistic_eqn <- function(x, Lmax, Lmu, Lintercept){(Lmax*Lintercept*exp(Lmu*x))/
   # filter(lognormdeltaOD >= 0) %>%
   # filter(lognormOD720 >= 0) %>%
 
-#Remove outlier filtering columns to simplify
-
-TargetDataNest  <- TargetDataWideFilter %>%
-  select(-c("MovMedian680", "MovMedian720", "MovMAD680", "MovMAD720", "IsMovMAD680Outlier", "IsMovMAD720Outlier")) |>
-nest(tubedata = c(time, abs_time, ToD, Day, Actinic_par, OD680, OD720))
+#fits fail for tubes 5, 6, 7; too much scatter, too many gaps
+TargetDataNest  <- TargetDataWideFilter  |>
+  nest(tubedata = c(time, abs_time, ToD, Day, Actinic_par, OD680, OD720))
 
 
 TargetDataGrowth <- TargetDataNest %>%
@@ -466,19 +475,8 @@ Export data to .csv
 ```{r write to csv}
 write_csv(TargetDataWideFilter, file = file.path(DataOut, paste("MultiCultiTubes", TubeLabels, ".csv", sep = ""))
 )
+
+write_csv(MetaData, file = file.path(DataOut, paste("MultiCultiMetaData", ".csv", sep = ""))
+)
 ```
-
-
-## Microbes Present 
-
-## Limitations
-
-## Future Direction
-
-
-# Conclusion
-
-
-# References
-
 
