@@ -89,6 +89,8 @@ library(tidyverse)
 library(broom)
 library(data.table)
 library(zoo)
+library(minpack.lm)
+library(kableExtra)
 ```
 
 This report was generated in `R version 4.3.2` [@r_core_team_r_2023], with the packages: `tidyverse`[@wickham_welcome_2019], `lubridate` [@grolemund_dates_2011], `knitr` [@xie_knitr_2023; @xie_dynamic_2015; @stodden_knitr_2014], `broom` [@robinson_broom_2024],`data.table` [@barrett_datatable_2024], and `zoo` [@zeileis_zoo_2005].
@@ -100,10 +102,11 @@ Project <- "B2201"
 
 DataIn <- file.path("..", "Data", "RawData")
 
-DataOut <- file.path("..","Data", "ProcessedData", "ImportedMCData")
+DataOut <- file.path("..","Data", "ProcessedData")
 
 # number of rows to skip upon read csv
 Skip <- 20
+MetaLines <- 17
 ```
 
 
@@ -124,6 +127,7 @@ list.files(DataIn)
 ```{r set TargetFile and read csv MCMIX004, warning = FALSE, message = FALSE}
 
 TargetFile <- "20250128_B2201_MCMIX004_123_0.csv"
+TubeLabels = 123
 
 # This opens a compressed file without decompressing.
 # TargetData <- read_csv(unz(DataIn, TargetFile),  
@@ -148,6 +152,21 @@ TargetData <- TargetData |>
   mutate(Filename = TargetFileName)
 
 ```
+
+```{r read metadata header rows}
+MetaData <- read_csv(file = file.path(DataIn, TargetFile), n_max = MetaLines) |>
+  filter(NAME != "GROUP_TYPE",
+         NAME != "GROUP_NAME",
+         NAME != "GROUP_ID",
+         NAME != "PLANNED_DURATION",
+         NAME != "PLANNED_DURATION_SEC",
+         NAME != "INOCULUM",
+         NAME != "key",
+         NAME != "GASSING",
+         NAME != "TERMINATION")
+
+```
+
 
 ```{r tidy MultiDataTarget MCMIX004}
 #filter superfluous rows to simplify later pivot
@@ -193,39 +212,6 @@ TargetData |>
 ```
 
 # Results and Discussion
-
-## Suprise results!? Does this plastic inhibit microbial growth?
-
->Plots all OD values. True detection is OD680 and false detection is OD720 [@genge_import_mcdata_2024].
-
-```{r prelim plot MCMIX004}
-
- TargetData %>%
-  filter(grepl("od-", key)) %>%
-  ggplot(data = .) +
-  geom_point(aes(x = time, y = value, colour = as.factor(str_detect(key, "680"))), size = 0.5) +
-   coord_cartesian(ylim = c(-0.08,0.05)) +
-  geom_vline(aes(xintercept = 4.3 * 24), 
-             linetype = "dashed") +
-  geom_vline(aes(xintercept = 11.3 * 24), 
-             linetype = "dashed") + 
-  geom_vline(aes(xintercept = 18.3 * 24), 
-             linetype =  "dashed") + 
-  geom_vline(aes(xintercept = 25.3 * 24), 
-             linetype =  "dashed") +
-  geom_vline(aes(xintercept = 32.3 * 24), 
-             linetype = "dashed") +
-  scale_colour_manual(values = c("black", "red")) +
-  labs(y = "Optical Density (OD)", x = "Elapsed Time (h)", title = "Tubes",
-       caption = "Figure 5. Optical density (OD) measurements over time at 25°C for tubes with different experimental conditions. Tubes 1–5 \nare replicates containing culture, nutrients, and plastic. Tube 6 contains culture and nutrients but no plastic. Tube 7 \ncontains nutrients and plastic but no culture. Tube 8 contains plastic but no culture or nutrients. True detections (OD680, red) \nand false detections (OD720, black) are shown. Dashed vertical lines represent when resuspension occured at \napproximately 4, 11, 18, 25, and 32 days. The y-axis is constrained to OD values between -0.1 and \n0.1 for clarity.") +
-  facet_grid(cols = vars(as.factor(Tube))) +
-  theme_bw() +
-  theme(axis.text.x = element_text(size = 7, angle = 90), 
-        plot.caption = element_text(size = 8, hjust = 0),
-        plot.margin = margin(10, 10, 50, 10))
-
-
-```
 
 # Generate par_ue column with rows aligned with OD measures [@genge_import_mcdata_2024]
 
@@ -287,14 +273,13 @@ TargetDataWideFilter <- TargetDataWide |>
 ```
 
 
-
 ```{r metadata merge MCMIX004}
 #This generates 'NA' values for ~1,000,000 rows of 'O2'; possibly the temperature rows?
 # TargetDataMeta <- left_join(x = TargetDataWide, y= CultureCatalog, by = c("MC", "Tube"))
 # rm(TargetDataWide)
 ```
 
-No statistically significant differences in relative fluorescence units were observed (Tables 1–2). However, slight visual trends in the optical density readings (Figures 6–8, 10–12), suggests the need for further testing. Increasing the number of control replicates and extending the observation period may help determine if these trends are consistent and potentially meaningful.
+
 
 ```{r data validation plot}
 TargetDataWideFilter %>% 
@@ -315,6 +300,173 @@ TargetDataWideFilter %>%
          plot.margin = margin(10, 10, 50, 10) )
 ```
 
+
+# Filter OD outliers
+
+Rewrite with Time Series tools?? Filtering messes up unless - values
+removed b/c of divisions
+
+Experiment end times are tube specific taken from metacatalog
+StartDate taken from first abs_time point from MC software
+
+MAD is median absolute deviation. Used median as opposed to mean to filter anomalous OD values due to affects of bubbling interference because determining outliers from the mean in a given window with many outliers were not detected since deviations from the mean were low. 
+```{r filter bad OD and data points after experiment end time }
+
+#first 5 h sampling every 5 min; filter out
+TargetDataWideFilter <- TargetDataWideFilter |>
+  filter(time >= 5)
+
+#moving average screen
+MovAvgScreen <- 5 # 6
+MovAvgWindow <- 7 # 20
+
+TargetDataWideFilter <- TargetDataWideFilter %>%
+  group_by(Tube) %>%
+  arrange(Filename, Tube, time) %>%
+  # mutate(ExpEndHour = (difftime(ExpEndDate, StartDate, units = "hours"))) %>%
+  #  mutate(TimeFlag = case_when(time >= ExpEndHour  ~ 1, 
+  #                             time < ExpEndHour ~ 0)) %>%
+  mutate(MovMedian680 = rollapply(OD680, MovAvgWindow, median, fill = "extend",  align = "left"),
+         MovMedian720 = rollapply(OD720, MovAvgWindow, median, fill = "extend",  align = "left"),
+         MovMAD680 = rollapply(OD680, MovAvgWindow, mad, fill = "extend",  align = "left"), 
+         MovMAD720 = rollapply(OD720, MovAvgWindow, mad, fill = "extend",  align = "left"), 
+         IsMovMAD680Outlier = if_else(OD680 > MovMedian680 + (MovMAD680 * MovAvgScreen) | OD680 < MovMedian680 - (MovMAD680 * MovAvgScreen), 1,0),
+         IsMovMAD720Outlier = if_else(OD720 > MovMedian720 + (MovMAD720 * MovAvgScreen) | OD720 < MovMedian720 - (MovMAD720 * MovAvgScreen), 1,0))
+
+
+# print(paste("Outliers caught by IsMovMAD680Outlier filter:",
+#             sum(TargetDataMetaFilter$IsMovMAD680Outlier, na.rm = TRUE)))
+# print(paste("Outliers caught by IsMovMAD720Outlier filter:",
+#             sum(TargetDataMetaFilter$IsMovMAD720Outlier, na.rm = TRUE)))
+
+
+TargetDataWideFilter <- TargetDataWideFilter %>%
+  filter(
+    !is.na(IsMovMAD680Outlier),
+    !is.na(IsMovMAD720Outlier),
+    IsMovMAD680Outlier == 0,
+    IsMovMAD720Outlier == 0
+         )
+
+# %>%
+#     filter(TimeFlag == 0) 
+
+#rm(TargetDataMeta)
+```
+
+# check to confirm filter and ensure there are data points for all 8 tubes. If there is a missing tube, confirm that data was filtered out because OD680 and/or OD720 <0. If this is the case run the chunk "Add positive OD dummy points" above and rerun subsequent chunks.
+```{r filterdataplot}
+
+TargetDataWideFilter %>%
+  ggplot() +
+  geom_point(aes(x = time, y = OD680), size = 0.15) +
+  geom_point(aes(x = time, y = OD720), size = 0.15, colour = "orange") +
+ facet_grid(cols = vars(as.factor(Tube))) +
+  theme_bw()
+
+```
+
+
+# Fits of Data
+Create R function for logistic equation.
+```{r fitting functions, message = FALSE}
+#define a logistic equation as a function.
+#x will be taken from 'time' when we run the fit.
+logistic_eqn <- function(x, Lmax, Lmu, Lintercept){(Lmax*Lintercept*exp(Lmu*x))/(Lmax + (Lintercept*(exp(Lmu*x)-1)))}
+
+```
+
+
+```{r nested regressions }
+
+#nest must include all variables that have more than one value for a given tube nest.
+#filtering to remove negative lognorm data only upon transition to ProcessDataNestGrowth and fitting; could do earlier?
+  # filter(lognormdeltaOD >= 0) %>%
+  # filter(lognormOD720 >= 0) %>%
+
+#Remove outlier filtering columns to simplify
+
+TargetDataNest  <- TargetDataWideFilter %>%
+  select(-c("MovMedian680", "MovMedian720", "MovMAD680", "MovMAD720", "IsMovMAD680Outlier", "IsMovMAD720Outlier")) |>
+nest(tubedata = c(time, abs_time, ToD, Day, Actinic_par, OD680, OD720))
+
+
+TargetDataGrowth <- TargetDataNest %>%
+  mutate(OD720_logistic = map(tubedata, possibly(~nlsLM(OD720 ~ logistic_eqn(x = time, Lmax, Lmu, Lintercept),
+                            data = .x,
+                            start = list(Lmax = max(.$OD720, na.rm = TRUE),  
+                                         Lmu = (log(max(.$OD720, na.rm = TRUE)) - log(min(.$OD720, na.rm = TRUE)))/max(.$time),
+                                         Lintercept = min(.$OD720, na.rm = TRUE)),
+                            control = list(maxiter = 500)), otherwise = NULL)),
+         OD720_logistic_tidied =  map(OD720_logistic, possibly(tidy, otherwise = NULL)),
+         OD720_logistic_param = map(OD720_logistic,possibly(glance, otherwise = NULL)),
+         OD720_logistic_predict = map(OD720_logistic, possibly(augment, otherwise = NULL))
+  )  %>%
+  mutate(OD720_TimetoMax = map(.x = OD720_logistic_predict, possibly(~.$time[which.max(.$`.fitted`)], otherwise = NULL))  
+         ) %>% 
+  mutate(OD720_TimetoMax = as.numeric(ifelse(OD720_TimetoMax == "NULL" , NA, OD720_TimetoMax))
+         ) |>
+   mutate(OD680_logistic = map(tubedata, possibly(~nlsLM(OD680 ~ logistic_eqn(x = time, Lmax, Lmu, Lintercept),
+                            data = .x,
+                            start = list(Lmax = max(.$OD680, na.rm = TRUE),  
+                                         Lmu = (log(max(.$OD680, na.rm = TRUE)) - log(min(.$OD720, na.rm = TRUE)))/max(.$time),
+                                         Lintercept = min(.$OD680, na.rm = TRUE)),
+                            control = list(maxiter = 500)), otherwise = NULL)),
+         OD680_logistic_tidied =  map(OD680_logistic, possibly(tidy, otherwise = NULL)),
+         OD680_logistic_param = map(OD680_logistic,possibly(glance, otherwise = NULL)),
+         OD680_logistic_predict = map(OD680_logistic, possibly(augment, otherwise = NULL))
+  )  %>%
+  mutate(OD680_TimetoMax = map(.x = OD680_logistic_predict, possibly(~.$time[which.max(.$`.fitted`)], otherwise = NULL))  
+         ) %>% 
+  mutate(OD680_TimetoMax = as.numeric(ifelse(OD680_TimetoMax == "NULL" , NA, OD680_TimetoMax))
+         )
+
+
+
+#failed attempt with map2
+# test = map2(.x = lognormOD720_Gompertz_tidied, .y = lognormOD720_Gompertz_predict, ~if_else(as.numeric(~pluck(.x, 2, 1)) <= as.numeric(~.y$time[which.max(.$`.fitted`)]), 1, 0))
+```
+
+# Plot data with logistic curve fits
+```{r logistic plots}
+TargetDataGrowth %>%
+  unnest(OD680_logistic_predict) |>
+  ggplot() +
+  geom_point(aes(x = time, y = OD680), size = 0.15) +
+  geom_line(aes(x = time, y = `.fitted`), colour = "darkgreen") +
+  geom_point(aes(x = time, y = `.resid`), colour = "red", size = 0.15) +
+ facet_grid(cols = vars(as.factor(Tube))) +
+  theme_bw()
+
+TargetDataGrowth %>%
+  unnest(OD720_logistic_predict) |>
+  ggplot() +
+  geom_point(aes(x = time, y = OD720), size = 0.15) +
+  geom_line(aes(x = time, y = `.fitted`), colour = "black") +
+  geom_point(aes(x = time, y = `.resid`), colour = "red", size = 0.15) +
+ facet_grid(cols = vars(as.factor(Tube))) +
+  theme_bw()
+```
+
+#Fit parameters
+```{r}
+kable(TargetDataGrowth |>
+  select(c(Tube, OD680_logistic_tidied, OD720_logistic_tidied)) |>
+unnest(cols = c(OD680_logistic_tidied, OD720_logistic_tidied), names_sep = "_") |>
+  select(-c(OD680_logistic_tidied_statistic, OD720_logistic_tidied_statistic, OD720_logistic_tidied_term)) |>
+  rename_with(~str_remove(.x, "tidied_")) |>
+  rename(Term = OD680_logistic_term),
+digits = 3
+)
+
+
+```
+
+Export data to .csv
+```{r write to csv}
+write_csv(TargetDataWideFilter, file = file.path(DataOut, paste("MultiCultiTubes", TubeLabels, ".csv", sep = ""))
+)
+```
 
 
 ## Microbes Present 
