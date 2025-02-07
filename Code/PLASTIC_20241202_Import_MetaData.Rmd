@@ -1,0 +1,90 @@
+---
+title: "Import_MetaData"
+author:
+- Heather MacTavish^1^*
+- Mireille Savoie^1^
+- Douglas A. Campbell^1^*
+- Carlie Barnhill^1^
+date: "`r format(Sys.Date())`"
+output:
+bookdown::html_document2:
+    code_folding: show
+    keep_md: yes
+    toc: TRUE
+    toc_float: TRUE
+    toc_depth: 6
+    fig_caption: yes
+bibliography: ../Docs/PBATDegradationCitations.bib
+csl: ../Docs/apa-with-abstract.csl
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+```{css, echo=FALSE}
+p.caption {
+  font-size: 18px;
+}
+```
+
+# Affiliations {-}
+^1^Mount Allison University, New Brunswick, Canada  
+
+*corresponding author
+
+# Acknowledgements {-}
+This R markdown file was created by Mireille Savoie and Douglas A. Campbell [@savoie_import_metadata_2024], and was adapted to meet the requirements of the Plastic Degradation term project for BIOL3111 in 2024, using the `FileImportFunctions.Rmd` file created by Douglas Campbell and Carlie Barnhill [@campbell_douglas_fileimportfunctions_2024].
+
+Brackets minus after heading excludes heading from numbering.
+DAC was supported by the Canada Research Chairs.
+
+# Overview
+This RMD imports meta data for MultiCultivator experiments from an excel sheet.
+
+# Materials & Methods  
+## Set Chunk Options
+Formatted display of content from .md file on GitHub site.
+Upon knitr figures will be saved to 'Figs/'
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, error = FALSE, message = FALSE)
+knitr::opts_chunk$set(fig.path='Figs/')
+```
+
+
+## Load Libraries and set Project Variables
+```{r load libraries}
+library(tidyverse) #core packages from Tidyverse
+library(lubridate) #tidyverse handling dates & times
+library(knitr) #output for knitting
+library(data.table) #fast data handling;  complement to tidverse dplyr
+```
+Files were imported using `R version 4.3.2` [@r_core_team_r_2023]. Packages `tidyverse`[@wickham_welcome_2019], `lubridate` [@grolemund_dates_2011], `knitr` [@xie_knitr_2023; @xie_dynamic_2015; @stodden_knitr_2014], and `data.table` [@barrett_datatable_2024] were used to import the meta data file and output the file.
+
+
+```{r set project variables}
+#"..", takes up a level in the directory path
+Project <- "Plastic"
+DataOut <- file.path("..","Data", "RawData")
+```
+
+# Import MetaData 
+
+
+```{r load Catalog direct from googlesheet, results = "hide"}
+# load CSV for plastic project
+CultureCatalog <- read.csv("../Data/RawData/PLASTIC_20241202_MetaData_CSV.csv")
+
+  # When using read_sheets()  WL is set to a list since some values are numbers, some are strings, some are blank.
+  # To fix this, first drop all rows missing WL, then unlist.
+  # Must first drop NA rows since unlist will collapse NULL lists, then the unlisted WL is a shorter length than original WL column, which mutate doesn't like.
+
+CultureCatalog <- CultureCatalog %>% 
+ drop_na(WL) %>%
+  mutate(WL = unlist(WL)) %>%
+   mutate(ExpStartDate = ymd(ExpStartDate),
+           ExpEndDate = ymd_hms(`ExpEndDate`))
+head(CultureCatalog)
+
+saveRDS(object = CultureCatalog, file = file.path(DataOut, "CultureCatalog.Rds"), compress = "xz")
+
+```
+# Bibliography
