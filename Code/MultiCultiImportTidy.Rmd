@@ -126,9 +126,9 @@ list.files(DataIn)
 
 ```{r set TargetFile and read csv MCMIX004, warning = FALSE, message = FALSE}
 
-TargetFile <- "20250128_B2201_MCMIX004_567_156.csv"
-TubeLabels = 567
-Light = 180
+TargetFile <- "20250128_B2201_MCMIX004_123_0.csv"
+TubeLabels = 123
+Light = 90
 
 # This opens a compressed file without decompressing.
 # TargetData <- read_csv(unz(DataIn, TargetFile),  
@@ -364,8 +364,8 @@ TargetDataWideFilter <- TargetDataWideFilter %>%
 
 TargetDataWideFilter %>%
   ggplot() +
-  geom_point(aes(x = time, y = OD680), size = 0.15) +
-  geom_point(aes(x = time, y = OD720), size = 0.15, colour = "orange") +
+  geom_point(aes(x = time, y = OD680), size = 0.15, colour = "darkgreen") +
+  geom_point(aes(x = time, y = OD720), size = 0.15, colour = "black") +
  facet_grid(cols = vars(as.factor(Tube))) +
   theme_bw()
 
@@ -478,7 +478,7 @@ TargetDataPivot <- TargetDataWideFilter |>
   pivot_wider(names_from = Tube, values_from = c(OD680, OD720)) |>
   na.omit()
                 
-write_csv(TargetDataWideFilter, file = file.path(DataOut, paste("MultiCultiTubes", TubeLabels, ".csv", sep = ""))
+write_csv(TargetDataPivot, file = file.path(DataOut, paste("MultiCultiTubes", TubeLabels, ".csv", sep = ""))
 )
 
 write_csv(MetaData, file = file.path(DataOut, paste("MultiCultiMetaData", ".csv", sep = ""))
