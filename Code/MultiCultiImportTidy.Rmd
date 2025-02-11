@@ -1,5 +1,5 @@
 ---
-title: "Plastic Degradation Term Project"
+title: "Microbial Growth Analyses - MultiCulti & Cell Counts"
 author:
 - Heather MacTavish^1^
 - Douglas A. Campbell^1^*
@@ -36,7 +36,9 @@ Dr. Campbell was supported by the Canada Research Chairs.
 
 # Overview
 
-This .Rmd Rworkbook imports data in simple .csv long form exported from PSI Multicultivators based upon project specific values for variables set by the user. 
+This .Rmd Rworkbook imports data in simple .csv long form exported from PSI Multicultivators based upon project specific values for variables set by the user.
+
+It imports .csv file(s) with cell count data taken in parallel.
 
 It tidies and organizes the data. It uses a pivot_wider and interpolation approach to get the Actinic_par and OD values in line rowwise. This requires careful 'arrange' of the rows. It imports a metadata catalog (Data/RawData/"CultureCatalog.Rds") and merges the metadata with the imported data based
 upon shared values for the variables 'MC', 'Tube', and 'Filename' which should unambiguously identify a given growth trajectory measured at OD680 or OD720. 
@@ -87,11 +89,33 @@ Skip <- 20
 MetaLines <- 17
 ```
 
-
-```{r MultiCulti files}
+# Read data in for work in R
+```{r raw data files}
 
 #List files in data folder
 list.files(DataIn)
+```
+
+
+```{r cell count data}
+CellCountData <- read_csv(file = file.path(DataIn, "CellCountsMaster.csv")) |>
+  filter(!is.na(REP_C_num)) #spurious rows imported
+
+CellCountData
+
+unique(CellCountData$REP_C_num)  #extensive incorrect data coding
+
+CellCountData <- CellCountData |>
+  filter(REP_C_num != "CHLORELLA", 
+         REP_C_num != "C-HIGH3",
+         REP_C_num != "c-LOW-1",
+         REP_C_num != "S-HIGH-2",
+         REP_C_num != "C-LOW-4",
+         REP_C_num != "C-HIGH-4",
+         REP_C_num != "C-HIGH-5"
+         )  # remove incorrect data entry
+
+unique(CellCountData$REP_C_num)
 ```
 
 ```{r set TargetFile and read csv, warning = FALSE, message = FALSE}
@@ -360,7 +384,7 @@ TargetDataGrowth <- TargetDataNest %>%
 
 ```
 
-# Plot data with logistic curve fits
+# Plot multiculti data with logistic curve fits
 ```{r logistic plots}
 TargetDataGrowth %>%
   unnest(OD680_logistic_predict) |>
@@ -381,8 +405,75 @@ TargetDataGrowth %>%
   theme_bw()
 ```
 
-#Fit parameters
+# Plot Cell Count Data
+```{r generate E_hours}
+CellCountData <- CellCountData |>
+  unite(DateTime, Date_YYYYMMDD:TIME_HHMM, sep = " ") |>
+  mutate(DateTime = lubridate::mdy_hm(DateTime)) |>
+  mutate(E_hours = as.numeric(DateTime - min(DateTime, na.rm = TRUE))) |>
+  mutate(E_hours = (E_hours - min(E_hours, na.rm = TRUE))/3600)
+```
+
+
+```{r cell count plot}
+CellCountData |>
+  ggplot() +
+  geom_point(aes(x = E_hours, y = CELLS_ML )) +
+  facet_grid(cols = vars(REP_C_num)) +
+  theme_bw()
+
+CellCountData |>
+  ggplot() +
+  geom_point(aes(x = E_hours, y = log(CELLS_ML))) +
+  facet_grid(cols = vars(REP_C_num)) +
+  theme_bw()
+
+
+```
+
+```{r nest cell count data}
+CellCountNest  <- CellCountData  |>
+  nest(CountData = -c(LIGHT,GENUS))
+
+```
+
+
 ```{r}
+
+CellGrowth <- CellCountNest %>%
+  mutate(Cell_logistic = map(CountData, possibly(~nlsLM(CELLS_ML ~ logistic_eqn(x = E_hours, Lmax, Lmu, Lintercept),
+                            data = .x,
+                            start = list(Lmax = max(.$CELLS_ML, na.rm = TRUE),  
+                                         Lmu = (log(max(.$CELLS_ML, na.rm = TRUE)) - log(min(.$CELLS_ML, na.rm = TRUE)))/max(.$time),
+                                         Lintercept = min(.$CELLS_ML, na.rm = TRUE)),
+                            control = list(maxiter = 500)), otherwise = NULL)
+                            ),
+         Cell_logistic_tidied =  map(Cell_logistic, possibly(tidy, otherwise = NULL)),
+         Cell_logistic_param = map(Cell_logistic,possibly(glance, otherwise = NULL)),
+         Cell_logistic_predict = map(Cell_logistic, possibly(augment, otherwise = NULL))
+  )  %>%
+  mutate(Cell_TimetoMax = map(.x = Cell_logistic_predict, possibly(~.$time[which.max(.$`.fitted`)], otherwise = NULL))  
+         ) %>% 
+  mutate(Cell_TimetoMax = as.numeric(ifelse(Cell_TimetoMax == "NULL" , NA, OD720_TimetoMax))
+         ) 
+
+```
+
+# plot cell count with logistic
+```{r cell count logistic plot}
+CellGrowth %>%
+  unnest(Cell_logistic_predict) |>
+  ggplot() +
+  geom_point(aes(x = E_hours, y = CELLS_ML), size = 0.15) +
+  geom_line(aes(x = E_hours, y = `.fitted`), colour = "darkgreen") +
+  geom_point(aes(x = E_hours, y = `.resid`), colour = "red", size = 0.15) +
+ facet_grid(cols = vars(as.factor(LIGHT))) +
+  theme_bw()
+```
+
+
+# MultiCulti Fit parameters
+```{r multiculti fit param}
 kable(TargetDataGrowth |>
   select(c(Tube, OD680_logistic_tidied, OD720_logistic_tidied)) |>
 unnest(cols = c(OD680_logistic_tidied, OD720_logistic_tidied), names_sep = "_") |>
@@ -391,9 +482,21 @@ unnest(cols = c(OD680_logistic_tidied, OD720_logistic_tidied), names_sep = "_") 
   rename(Term = OD680_logistic_term),
 digits = 3
 )
+```
 
+# Cell Count Fit parameters
+```{r cell count fit param}
+kable(CellGrowth |>
+  select(c(LIGHT, Cell_logistic_tidied)) |>
+  unnest(cols = c(Cell_logistic_tidied), names_sep = "_") |>
+  select(-c(Cell_logistic_tidied_statistic)) |>
+  rename_with(~str_remove(.x, "tidied_")) |>
+  rename(Term = Cell_logistic_term),
+digits = 3
+)
 
 ```
+
 
 Export data to .csv
 ```{r write to csv}
