@@ -510,5 +510,9 @@ write_csv(TargetDataPivot, file = file.path(DataOut, paste("MultiCultiTubes", Tu
 
 write_csv(MetaData, file = file.path(DataOut, paste("MultiCultiMetaData", ".csv", sep = ""))
 )
+
+write_csv(CellCountData, file = file.path(DataOut, paste("CellCountData", ".csv", sep = ""))
+)
+
 ```
 
