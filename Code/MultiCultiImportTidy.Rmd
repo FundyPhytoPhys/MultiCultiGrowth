@@ -407,11 +407,12 @@ TargetDataGrowth %>%
 
 # Plot Cell Count Data
 ```{r generate E_hours}
-CellCountData <- CellCountData |>
-  unite(DateTime, Date_YYYYMMDD:TIME_HHMM, sep = " ") |>
-  mutate(DateTime = lubridate::mdy_hm(DateTime)) |>
-  mutate(E_hours = as.numeric(DateTime - min(DateTime, na.rm = TRUE))) |>
-  mutate(E_hours = (E_hours - min(E_hours, na.rm = TRUE))/3600)
+CellCountData <- CellCountData %>%
+  unite(DateTime, Date_YYYYMMDD:TIME_HHMM, sep = " ") %>%
+  mutate(DateTime = lubridate::mdy_hm(DateTime)) %>%
+  mutate(E_hours = as.numeric(DateTime - min(DateTime, na.rm = TRUE))) %>%
+  mutate(E_hours = (E_hours - min(E_hours, na.rm = TRUE))/3600) %>%
+  relocate(E_hours)
 ```
 
 
@@ -438,7 +439,7 @@ CellCountNest  <- CellCountData  |>
 ```
 
 
-```{r}
+```{r cell growth}
 
 CellGrowth <- CellCountNest %>%
   mutate(Cell_logistic = map(CountData, possibly(~nlsLM(CELLS_ML ~ logistic_eqn(x = E_hours, Lmax, Lmu, Lintercept),
