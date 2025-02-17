@@ -407,12 +407,26 @@ TargetDataGrowth %>%
 
 # Plot Cell Count Data
 ```{r generate E_hours}
-CellCountData <- CellCountData %>%
-  unite(DateTime, Date_YYYYMMDD:TIME_HHMM, sep = " ") %>%
-  mutate(DateTime = lubridate::mdy_hm(DateTime)) %>%
-  mutate(E_hours = as.numeric(DateTime - min(DateTime, na.rm = TRUE))) %>%
-  mutate(E_hours = (E_hours - min(E_hours, na.rm = TRUE))/3600) %>%
-  relocate(E_hours)
+#Issues with times not aligning
+# CellCountData <- CellCountData %>%
+#   unite(DateTime, Date_YYYYMMDD:TIME_HHMM, sep = " ") %>%
+#   mutate(DateTime = lubridate::mdy_hm(DateTime)) %>%
+#   mutate(E_hours = as.numeric(DateTime - min(DateTime, na.rm = TRUE))) %>%
+#   mutate(E_hours = (E_hours - min(E_hours, na.rm = TRUE))/3600) %>%
+#   relocate(E_hours)
+
+CellCountData <- CellCountData |>
+  mutate(Date = lubridate::mdy(Date_YYYYMMDD)) |>
+  mutate(E_hours = (as.numeric(Date - min(Date, na.rm = TRUE))*24)
+         ) |>
+  relocate(E_hours) |>
+  arrange(E_hours)
+
+# CellCountDataWide <- CellCountData |>
+#   select(E_hours, LIGHT, GENUS, REP_C_num, CELLS_ML,       ln_CELLS_ML) |>
+#   pivot_wider(names_from = REP_C_num, values_from = c(CELLS_ML, ln_CELLS_ML))
+
+  
 ```
 
 
@@ -445,18 +459,15 @@ CellGrowth <- CellCountNest %>%
   mutate(Cell_logistic = map(CountData, possibly(~nlsLM(CELLS_ML ~ logistic_eqn(x = E_hours, Lmax, Lmu, Lintercept),
                             data = .x,
                             start = list(Lmax = max(.$CELLS_ML, na.rm = TRUE),  
-                                         Lmu = (log(max(.$CELLS_ML, na.rm = TRUE)) - log(min(.$CELLS_ML, na.rm = TRUE)))/max(.$time),
+                                         Lmu = (log(max(.$CELLS_ML, na.rm = TRUE)) - log(min(.$CELLS_ML, na.rm = TRUE)))/max(.$E_hours),
                                          Lintercept = min(.$CELLS_ML, na.rm = TRUE)),
                             control = list(maxiter = 500)), otherwise = NULL)
                             ),
          Cell_logistic_tidied =  map(Cell_logistic, possibly(tidy, otherwise = NULL)),
          Cell_logistic_param = map(Cell_logistic,possibly(glance, otherwise = NULL)),
          Cell_logistic_predict = map(Cell_logistic, possibly(augment, otherwise = NULL))
-  )  %>%
-  mutate(Cell_TimetoMax = map(.x = Cell_logistic_predict, possibly(~.$time[which.max(.$`.fitted`)], otherwise = NULL))  
-         ) %>% 
-  mutate(Cell_TimetoMax = as.numeric(ifelse(Cell_TimetoMax == "NULL" , NA, OD720_TimetoMax))
-         ) 
+  )
+
 
 ```
 
